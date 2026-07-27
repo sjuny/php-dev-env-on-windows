@@ -29,4 +29,4 @@
 - 「ソースファイル格納ディレクトリ」は以下の通り。
   - `<project-root-path>/.tools`
   - `<project-root-path>/.dev-env-rsrc`
-  - `<project-root-path>/program`
+  - `<project-root-path>/application`

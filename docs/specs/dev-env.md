@@ -29,7 +29,7 @@ project-root/
     stop.ps1
     status.ps1
 
-  program/
+  application/
     public/
 ```
 
@@ -61,12 +61,12 @@ nginx/
 ### 役割
 
 - HTTPサーバ
-- `program/public`の公開
+- `application/public`の公開
 - PHP-CGIへのFastCGI転送
 - Windowsサービスとして動作しない
 
 `web-app.conf`のドキュメントルートは、インストール時に
-`<プロジェクトルート>/program/public`へ設定される。
+`<プロジェクトルート>/application/public`へ設定される。
 
 ---
 
@@ -208,7 +208,7 @@ MySQLはデータディレクトリ内のPIDファイル、PHPは`runtime/php.pi
 Webアプリケーションの公開ソースは以下に配置する。
 
 ```text
-project-root/program/public
+project-root/application/public
 ```
 
 `.dev-env`にはアプリケーションのソースを含めない。
@@ -234,5 +234,5 @@ DSCによって更新されるものは以下である。
 - mysql/data
 - mysql/logs
 - runtime
-- `program/public`配下のソース
+- `application/public`配下のソース
 - インストール専用の`initialize-mysql.ps1`

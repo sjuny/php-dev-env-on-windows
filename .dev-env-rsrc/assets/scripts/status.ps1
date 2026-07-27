@@ -121,17 +121,19 @@ function Invoke-Main {
         Get-EnvironmentStatus -Name 'MySQL' -PidPath (Join-Path $runtimeRoot 'mysql.pid') -ProcessId $mySqlProcessId
         Get-EnvironmentStatus -Name 'PHP' -PidPath (Join-Path $runtimeRoot 'php.pid')
         $nginxProcessId = Get-ProcessIdByName -Name 'nginx'
-        Get-EnvironmentStatus -Name 'nginx' -PidPath (Join-Path $runtimeRoot 'nginx.pid') -ProcessId $nginxProcessId
+        $nginxStatus = Get-EnvironmentStatus -Name 'nginx' -PidPath (Join-Path $runtimeRoot 'nginx.pid') -ProcessId $nginxProcessId
+        $nginxStatus
 
         # nginxのHTTP疎通を確認する。
-        # nginxのHTTP疎通を確認する。
-        try {
-            $httpUri = 'http://localhost:{0}' -f $HTTP_PORT
-            Invoke-WebRequest -Uri $httpUri -UseBasicParsing -TimeoutSec $HTTP_TIMEOUT_SECONDS |
-                Select-Object StatusCode, BaseResponse
-        }
-        catch {
-            Write-Warning $_.Exception.Message
+        if ($nginxStatus.Running) {
+            try {
+                $httpUri = 'http://localhost:{0}' -f $HTTP_PORT
+                Invoke-WebRequest -Uri $httpUri -UseBasicParsing -TimeoutSec $HTTP_TIMEOUT_SECONDS |
+                    Select-Object StatusCode, BaseResponse
+            }
+            catch {
+                Write-Warning $_.Exception.Message
+            }
         }
 
         $script:STATUS_EXIT_CODE = $SUCCESS_EXIT_CODE

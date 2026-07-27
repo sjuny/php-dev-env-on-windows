@@ -30,6 +30,39 @@ Set-Variable -Name FAILURE_EXIT_CODE -Option Constant -Value 1
 
 <#
 .SYNOPSIS
+    WinRMサービスの起動状態を確認し、停止中の場合は起動する。
+.DESCRIPTION
+    DSC適用に必要なWinRMサービスを取得し、停止中の場合は起動する。
+    起動要求後は、サービスが実行中になるまで待機する。
+.EXAMPLE
+    Start-WinRmService
+#>
+function Start-WinRmService {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param()
+
+    $service = Get-Service -Name 'WinRM' -ErrorAction Stop
+    if ($service.Status -eq 'Running') {
+        return
+    }
+
+    if (-not $PSCmdlet.ShouldProcess('WinRM', 'サービスを起動する')) {
+        return
+    }
+
+    Start-Service -InputObject $service -ErrorAction Stop
+    $service.WaitForStatus(
+        [System.ServiceProcess.ServiceControllerStatus]::Running,
+        [TimeSpan]::FromSeconds(30)
+    )
+
+    if ($service.Status -ne 'Running') {
+        throw 'WinRMサービスを起動できない。'
+    }
+}
+
+<#
+.SYNOPSIS
     DSC適用に必要な前提条件を確認する。
 #>
 function Test-Prerequisite {
@@ -124,7 +157,7 @@ function Set-NginxDocumentRoot {
     }
 
     # Windows形式のパスをnginx設定用のスラッシュ区切りへ変換する。
-    $publicPath = (Join-Path $ProjectRoot 'program\public') -replace '\\', '/'
+    $publicPath = (Join-Path $ProjectRoot 'application\public') -replace '\\', '/'
     $phpMyAdminPath = (Join-Path $EnvironmentRoot 'phpmyadmin') -replace '\\', '/'
     $template = Get-Content -LiteralPath $templatePath -Raw
     if (-not $template.Contains('__PROJECT_PUBLIC_PATH__')) {
@@ -174,7 +207,8 @@ function Invoke-MySqlInitialization {
 
     $databaseName = $Configuration.MySqlDatabaseName
     if ([string]::IsNullOrWhiteSpace($databaseName)) {
-        throw 'MySqlDatabaseNameが設定されていない。'
+        # DB名が空の場合は、MySQLの初期化とDB作成を行わない。
+        return
     }
 
     & $INITIALIZE_MYSQL_SCRIPT_PATH -MySqlRoot (Join-Path $Configuration.EnvironmentRoot 'mysql') `
@@ -229,6 +263,9 @@ function Invoke-Main {
         New-Item -Path $OUTPUT_ROOT, $LOG_ROOT -ItemType Directory -Force | Out-Null
         $transcriptPath = Join-Path $LOG_ROOT (Get-Date -Format $LOG_NAME_FORMAT)
         Start-Transcript -Path $transcriptPath -Force | Out-Null
+
+        # DSC適用前にWinRMサービスを起動する。
+        Start-WinRmService
 
         # Configurationを読み込み、localhost用MOFを生成する。
         $env:PSModulePath = "$RESOURCE_ROOT\modules;$env:PSModulePath"

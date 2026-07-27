@@ -146,7 +146,7 @@ modules/
 - 設定ファイルのSHA-256による内容比較
 
 `web-app.conf`はテンプレートとして管理する。`install.ps1`が
-`<プロジェクトルート>/program/public`をドキュメントルートとして生成先へ反映する。
+`<プロジェクトルート>/application/public`をドキュメントルートとして生成先へ反映する。
 
 ### PhpEnvironment
 
