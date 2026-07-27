@@ -1,0 +1,11 @@
+# 取得元リポジトリSSHアドレス(ドメインは.ssh/configのエイリアスではない。)
+repository-url = "git@github.com:triad-japan/ai-agent-resource.git"
+
+# 取得対象リソース名（取得元workspace直下フォルダ名）
+resource-name = "software-development"
+
+# 取得対象のref（未指定時は main）
+ref = "main"
+
+# 取得しないskillsフォルダ名
+exclusive-skill-folder-names = []

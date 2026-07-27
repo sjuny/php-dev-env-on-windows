@@ -1,0 +1,8 @@
+CLAUDE.md
+.notes/**
+.claude/skills
+.claude/settings.json
+.dev-env-rsrc/outputs/localhost.mof
+.dev-env-rsrc/outputs/logs/
+.dev-env-rsrc/assets/**/*.zip
+.dev-env/**
