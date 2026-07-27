@@ -6,7 +6,7 @@
 .OUTPUTS
     成功時は0、失敗時は1を返す。
 .EXAMPLE
-    .\.dev-env\start.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start.ps1
 #>
 [CmdletBinding()]
 param()

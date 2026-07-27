@@ -12,8 +12,8 @@
 .PARAMETER Port
     一時起動したMySQLへ接続するポート番号。
 .EXAMPLE
-    .\initialize-mysql.ps1 -MySqlRoot 'C:\project\.dev-env\mysql' `
-        -DatabaseName 'laravel' -Port 3306
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\initialize-mysql.ps1 -MySqlRoot 'C:\project\.dev-env\mysql' `
+        -DatabaseName 'laravel' -Port 3306 
 #>
 [CmdletBinding()]
 param(
@@ -152,7 +152,7 @@ function New-MySqlDatabase {
             }
 
             & $Configuration.ClientPath '--protocol=tcp' '--host=127.0.0.1' `
-                ('--port={0}' -f $Configuration.Port) '--user=root' '--execute=SELECT 1;'
+            ('--port={0}' -f $Configuration.Port) '--user=root' '--execute=SELECT 1;'
             if ($LASTEXITCODE -eq 0) {
                 $isReady = $true
                 break
@@ -169,7 +169,7 @@ function New-MySqlDatabase {
         $escapedName = $Configuration.DatabaseName.Replace('`', '``')
         $query = "CREATE DATABASE IF NOT EXISTS ``$escapedName``;"
         & $Configuration.ClientPath '--protocol=tcp' '--host=127.0.0.1' `
-            ('--port={0}' -f $Configuration.Port) '--user=root' ('--execute={0}' -f $query)
+        ('--port={0}' -f $Configuration.Port) '--user=root' ('--execute={0}' -f $query)
         if ($LASTEXITCODE -ne 0) {
             throw "データベース作成が終了コード$LASTEXITCODEで失敗した。"
         }
@@ -211,29 +211,29 @@ function Invoke-Main {
             throw "データベース名に使用できない文字が含まれている: $DatabaseName"
         }
 
-    # MySQL関連パスを解決する。
-    $dataPath = Join-Path $MySqlRoot $DATA_DIRECTORY_NAME
-    $serverPath = Join-Path $MySqlRoot $SERVER_EXECUTABLE_NAME
-    $clientPath = Join-Path $MySqlRoot $CLIENT_EXECUTABLE_NAME
-    $configurationPath = Join-Path $MySqlRoot $CONFIGURATION_PATH
-    # 初期化に必要なパスの存在を確認する。
-    foreach ($path in @($MySqlRoot, $serverPath, $clientPath, $configurationPath)) {
-        if (-not (Test-Path -LiteralPath $path)) {
-            throw "MySQL初期化に必要なパスが存在しない: $path"
+        # MySQL関連パスを解決する。
+        $dataPath = Join-Path $MySqlRoot $DATA_DIRECTORY_NAME
+        $serverPath = Join-Path $MySqlRoot $SERVER_EXECUTABLE_NAME
+        $clientPath = Join-Path $MySqlRoot $CLIENT_EXECUTABLE_NAME
+        $configurationPath = Join-Path $MySqlRoot $CONFIGURATION_PATH
+        # 初期化に必要なパスの存在を確認する。
+        foreach ($path in @($MySqlRoot, $serverPath, $clientPath, $configurationPath)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+                throw "MySQL初期化に必要なパスが存在しない: $path"
+            }
         }
-    }
 
-    # MySQL接続設定を構成する。
-    $configuration = [pscustomobject]@{
-        ConfigurationPath = $configurationPath
-        MySqlRoot = $MySqlRoot
-        ServerPath = $serverPath
-        ClientPath = $clientPath
-        DatabaseName = $DatabaseName
-        Port = $Port
-        TimeoutSeconds = $SERVER_START_TIMEOUT_SECONDS
-        PollIntervalSeconds = $SERVER_POLL_INTERVAL_SECONDS
-    }
+        # MySQL接続設定を構成する。
+        $configuration = [pscustomobject]@{
+            ConfigurationPath   = $configurationPath
+            MySqlRoot           = $MySqlRoot
+            ServerPath          = $serverPath
+            ClientPath          = $clientPath
+            DatabaseName        = $DatabaseName
+            Port                = $Port
+            TimeoutSeconds      = $SERVER_START_TIMEOUT_SECONDS
+            PollIntervalSeconds = $SERVER_POLL_INTERVAL_SECONDS
+        }
         # データディレクトリを初期化し、データベースを作成する。
         Initialize-MySqlData -DataPath $dataPath -ServerPath $serverPath
         New-MySqlDatabase -Configuration $configuration

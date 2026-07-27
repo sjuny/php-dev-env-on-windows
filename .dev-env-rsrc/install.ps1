@@ -5,7 +5,7 @@
     前提条件を確認し、トランスクリプトを保存した上でConfigurationをコンパイルし、
     生成したMOFをStart-DscConfigurationで適用する。
 .EXAMPLE
-    .\.dev-env-rsrc\install.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 #>
 
 [CmdletBinding()]

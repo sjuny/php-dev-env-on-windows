@@ -6,7 +6,7 @@
 .OUTPUTS
     成功時は0、失敗時は1を返す。
 .EXAMPLE
-    .\.dev-env\status.ps1
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\status.ps1
 #>
 [CmdletBinding()]
 param()
@@ -92,7 +92,7 @@ function Get-EnvironmentStatus {
         $ProcessId = [int](Get-Content -LiteralPath $PidPath -Raw)
     }
 
-        # プロセスの実行状態を確認する。
+    # プロセスの実行状態を確認する。
     $isRunning = $null -ne $ProcessId -and $null -ne (Get-Process -Id $ProcessId -ErrorAction SilentlyContinue)
 
     # 状態確認結果をオブジェクトとして返す。
@@ -129,7 +129,7 @@ function Invoke-Main {
             try {
                 $httpUri = 'http://localhost:{0}' -f $HTTP_PORT
                 Invoke-WebRequest -Uri $httpUri -UseBasicParsing -TimeoutSec $HTTP_TIMEOUT_SECONDS |
-                    Select-Object StatusCode, BaseResponse
+                Select-Object StatusCode, BaseResponse
             }
             catch {
                 Write-Warning $_.Exception.Message
