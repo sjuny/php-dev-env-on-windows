@@ -113,7 +113,6 @@ function Start-ManagedProcess {
 #>
 function Invoke-Main {
     [CmdletBinding()]
-    [OutputType([int])]
     param()
 
     try {
@@ -177,12 +176,12 @@ function Invoke-Main {
             -FilePath (Join-Path $environmentRoot 'nginx\nginx.exe') `
             -WorkingDirectory (Join-Path $environmentRoot 'nginx') `
             -PidPath (Join-Path $runtimeRoot 'nginx.pid')
-        return [int]$SUCCESS_EXIT_CODE
+        exit $SUCCESS_EXIT_CODE
     }
     catch {
         Write-Error -ErrorRecord $_
-        return [int]$FAILURE_EXIT_CODE
+        exit $FAILURE_EXIT_CODE
     }
 }
 
-exit (Invoke-Main)
+Invoke-Main

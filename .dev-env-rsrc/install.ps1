@@ -82,6 +82,11 @@ function Test-Prerequisite {
         throw "MySQL初期化スクリプトが見つからない: $INITIALIZE_MYSQL_SCRIPT_PATH"
     }
 
+    $mySqlConfigurationTemplatePath = Join-Path $ASSET_ROOT 'mysql\my.ini'
+    if (-not (Test-Path -LiteralPath $mySqlConfigurationTemplatePath -PathType Leaf)) {
+        throw "MySQL設定テンプレートが見つからない: $mySqlConfigurationTemplatePath"
+    }
+
     $phpMyAdminAssetPath = Join-Path $ASSET_ROOT 'phpmyadmin'
     if (-not (Test-Path -LiteralPath $phpMyAdminAssetPath -PathType Container)) {
         throw "phpMyAdmin資材ディレクトリが見つからない: $phpMyAdminAssetPath"
@@ -177,6 +182,71 @@ function Set-NginxDocumentRoot {
     $configuration = $configuration.Replace('__PHPMYADMIN_ROOT_PATH__', $phpMyAdminPath)
     $configuration = $configuration.Replace('__PHPMYADMIN_PORT__', $PhpMyAdminPort.ToString())
     if ($PSCmdlet.ShouldProcess($destinationPath, 'nginx設定を配置する')) {
+        [System.IO.File]::WriteAllText(
+            $destinationPath,
+            $configuration,
+            [System.Text.UTF8Encoding]::new($false)
+        )
+    }
+}
+
+<#
+.SYNOPSIS
+    配置先に応じてMySQLの設定ファイルを絶対パスで配置する。
+.DESCRIPTION
+    my.iniテンプレートの置換文字列をMySQLの実パスへ置換して配置する。
+    相対パス指定はカレントディレクトリに依存して起動が失敗するため、絶対パスで設定する。
+.PARAMETER EnvironmentRoot
+    .dev-envのルートディレクトリ。
+.PARAMETER MySqlPort
+    MySQLが待ち受けるポート番号。
+.EXAMPLE
+    Set-MySqlConfiguration -EnvironmentRoot $environmentRoot -MySqlPort 3306
+#>
+function Set-MySqlConfiguration {
+    [CmdletBinding(SupportsShouldProcess = $true)]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$EnvironmentRoot,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateRange(1, 65535)]
+        [int]$MySqlPort
+    )
+
+    # MySQL設定のテンプレートと出力先を解決する。
+    $templatePath = Join-Path $ASSET_ROOT 'mysql\my.ini'
+    $mySqlRoot = Join-Path $EnvironmentRoot 'mysql'
+    $destinationPath = Join-Path $mySqlRoot 'conf\my.ini'
+    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
+        throw "MySQL設定テンプレートが見つからない: $templatePath"
+    }
+
+    if (-not (Test-Path -LiteralPath (Split-Path -Parent $destinationPath) -PathType Container)) {
+        throw "MySQL設定ディレクトリが見つからない: $(Split-Path -Parent $destinationPath)"
+    }
+
+    # Windows形式のパスをMySQL設定用のスラッシュ区切りへ変換する。
+    $replacementMap = [ordered]@{
+        '__MYSQL_ROOT_PATH__' = $mySqlRoot -replace '\\', '/'
+        '__MYSQL_DATA_PATH__' = (Join-Path $mySqlRoot 'data') -replace '\\', '/'
+        '__MYSQL_TEMP_PATH__' = (Join-Path $mySqlRoot 'temp') -replace '\\', '/'
+        '__MYSQL_LOG_PATH__'  = (Join-Path $mySqlRoot 'logs\mysql-error.log') -replace '\\', '/'
+        '__MYSQL_PORT__'      = $MySqlPort.ToString()
+    }
+
+    # テンプレートの置換文字列を実パスへ置換する。
+    $configuration = Get-Content -LiteralPath $templatePath -Raw
+    foreach ($placeholder in $replacementMap.Keys) {
+        if (-not $configuration.Contains($placeholder)) {
+            throw "MySQL設定テンプレートに置換文字列がない: $placeholder"
+        }
+
+        $configuration = $configuration.Replace($placeholder, $replacementMap[$placeholder])
+    }
+
+    if ($PSCmdlet.ShouldProcess($destinationPath, 'MySQL設定を配置する')) {
         [System.IO.File]::WriteAllText(
             $destinationPath,
             $configuration,
@@ -292,16 +362,20 @@ function Invoke-Main {
         Set-NginxDocumentRoot -ProjectRoot $projectRoot -EnvironmentRoot $localhostNode.EnvironmentRoot `
             -PhpMyAdminPort $localhostNode.PhpMyAdminPort
 
+        # 配置先の実パスをMySQL設定へ反映する。
+        Set-MySqlConfiguration -EnvironmentRoot $localhostNode.EnvironmentRoot `
+            -MySqlPort $localhostNode.MySqlPort
+
         # DSC適用後にMySQLデータディレクトリと指定データベースを初期化する。
         $null = Invoke-MySqlInitialization -Configuration $localhostNode
 
         # MySQL初期化処理が残したMySQLプロセスを停止する。
         Stop-MySqlProcess -EnvironmentRoot $localhostNode.EnvironmentRoot
-        return $SUCCESS_EXIT_CODE
+        exit $SUCCESS_EXIT_CODE
     }
     catch {
         Write-Error -ErrorRecord $_
-        return $FAILURE_EXIT_CODE
+        exit $FAILURE_EXIT_CODE
     }
     finally {
         # 開始済みのトランスクリプトを必ず終了する。
@@ -311,4 +385,4 @@ function Invoke-Main {
     }
 }
 
-exit (Invoke-Main)
+Invoke-Main

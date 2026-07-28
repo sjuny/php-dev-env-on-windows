@@ -45,12 +45,12 @@
         }
     }
 
-    # 展開したMySQLへMySQL設定ファイルを配置する。
-    File MySqlConfiguration {
-        DestinationPath = (Join-Path $EnvironmentRoot 'mysql\conf\my.ini')
-        SourcePath = (Join-Path $AssetRoot 'mysql\my.ini')
+    # MySQL設定ファイルの配置先ディレクトリを作成する。
+    # my.iniは絶対パスへの置換が必要なため、install.ps1のSet-MySqlConfigurationで配置する。
+    File MySqlConfigurationDirectory {
+        DestinationPath = (Join-Path $EnvironmentRoot 'mysql\conf')
+        Type = 'Directory'
         Ensure = 'Present'
-        Type = 'File'
         DependsOn = '[Script]InstallMySqlDirectory'
     }
 

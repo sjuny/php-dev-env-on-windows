@@ -104,7 +104,6 @@ function Stop-ProcessByName {
 #>
 function Invoke-Main {
     [CmdletBinding()]
-    [OutputType([int])]
     param()
 
     try {
@@ -119,12 +118,12 @@ function Invoke-Main {
         # MySQLを停止する。
         $mySqlProcessId = Get-MySqlProcessId -EnvironmentRoot $PSScriptRoot
         Stop-ProcessByPidFile -PidPath (Join-Path $runtimeRoot 'mysql.pid') -ProcessId $mySqlProcessId
-        return [int]$SUCCESS_EXIT_CODE
+        exit $SUCCESS_EXIT_CODE
     }
     catch {
         Write-Error -ErrorRecord $_
-        return [int]$FAILURE_EXIT_CODE
+        exit $FAILURE_EXIT_CODE
     }
 }
 
-exit (Invoke-Main)
+Invoke-Main

@@ -13,7 +13,7 @@
     一時起動したMySQLへ接続するポート番号。
 .EXAMPLE
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\initialize-mysql.ps1 -MySqlRoot 'C:\project\.dev-env\mysql' `
-        -DatabaseName 'laravel' -Port 3306 
+        -DatabaseName 'laravel' -Port 3306
 #>
 [CmdletBinding()]
 param(
@@ -40,6 +40,9 @@ Set-Variable -Name SERVER_EXECUTABLE_NAME -Option Constant -Value 'bin\mysqld.ex
 Set-Variable -Name CLIENT_EXECUTABLE_NAME -Option Constant -Value 'bin\mysql.exe'
 Set-Variable -Name SERVER_START_TIMEOUT_SECONDS -Option Constant -Value 60
 Set-Variable -Name SERVER_POLL_INTERVAL_SECONDS -Option Constant -Value 1
+# 起動失敗時に例外へ含めるエラーログの取得設定である。
+Set-Variable -Name ERROR_LOG_PATH -Option Constant -Value 'logs\mysql-error.log'
+Set-Variable -Name ERROR_LOG_TAIL_LINE_COUNT -Option Constant -Value 20
 Set-Variable -Name SUCCESS_EXIT_CODE -Option Constant -Value 0
 Set-Variable -Name FAILURE_EXIT_CODE -Option Constant -Value 1
 
@@ -84,7 +87,10 @@ function Initialize-MySqlData {
         [string]$DataPath,
 
         [Parameter(Mandatory = $true)]
-        [string]$ServerPath
+        [string]$ServerPath,
+
+        [Parameter(Mandatory = $true)]
+        [string]$MySqlRoot
     )
 
     # 初期化済みかをシステムデータベースの存在で判定する。
@@ -100,9 +106,46 @@ function Initialize-MySqlData {
 
         # 初期化コマンドの終了コードを確認する。
         if ($LASTEXITCODE -ne 0) {
-            throw "MySQLデータディレクトリの初期化が終了コード$LASTEXITCODEで失敗した。"
+            # 失敗原因を判別できるようエラーログを例外へ含める。
+            $errorLog = Get-MySqlErrorLog -MySqlRoot $MySqlRoot
+            throw "MySQLデータディレクトリの初期化が終了コード$LASTEXITCODEで失敗した。`n$errorLog"
         }
     }
+}
+
+<#
+.SYNOPSIS
+    MySQLのエラーログ末尾を取得する。
+.DESCRIPTION
+    起動失敗の原因を例外メッセージへ含めるため、エラーログの末尾を取得する。
+    ログが存在しない場合は、その旨を示す文字列を返す。
+.PARAMETER MySqlRoot
+    MySQLのルートディレクトリ。
+.EXAMPLE
+    Get-MySqlErrorLog -MySqlRoot $MySqlRoot
+#>
+function Get-MySqlErrorLog {
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$MySqlRoot
+    )
+
+    # エラーログの有無を確認する。
+    $logPath = Join-Path $MySqlRoot $ERROR_LOG_PATH
+    if (-not (Test-Path -LiteralPath $logPath -PathType Leaf)) {
+        return "エラーログが存在しない: $logPath"
+    }
+
+    # 原因判別に必要な末尾行を取得する。
+    $logLines = @(Get-Content -LiteralPath $logPath -Tail $ERROR_LOG_TAIL_LINE_COUNT -ErrorAction SilentlyContinue)
+    if ($logLines.Count -eq 0) {
+        return "エラーログが空である: $logPath"
+    }
+
+    return "エラーログ($logPath):`n{0}" -f ($logLines -join "`n")
 }
 
 <#
@@ -148,7 +191,9 @@ function New-MySqlDatabase {
         $isReady = $false
         for ($attempt = 0; $attempt -lt $Configuration.TimeoutSeconds; $attempt++) {
             if ($serverProcess.HasExited) {
-                throw 'MySQL一時プロセスが接続前に終了した。'
+                # 失敗原因を判別できるようエラーログを例外へ含める。
+                $errorLog = Get-MySqlErrorLog -MySqlRoot $Configuration.MySqlRoot
+                throw "MySQL一時プロセスが接続前に終了コード$($serverProcess.ExitCode)で終了した。`n$errorLog"
             }
 
             & $Configuration.ClientPath '--protocol=tcp' '--host=127.0.0.1' `
@@ -162,7 +207,9 @@ function New-MySqlDatabase {
         }
 
         if (-not $isReady) {
-            throw 'MySQLが接続可能になる前にタイムアウトした。'
+            # 失敗原因を判別できるようエラーログを例外へ含める。
+            $errorLog = Get-MySqlErrorLog -MySqlRoot $Configuration.MySqlRoot
+            throw "MySQLが接続可能になる前に$($Configuration.TimeoutSeconds)秒でタイムアウトした。`n$errorLog"
         }
 
         # データベース名をSQL識別子へ安全に埋め込み、作成する。
@@ -193,7 +240,6 @@ function New-MySqlDatabase {
 #>
 function Invoke-Main {
     [CmdletBinding()]
-    [OutputType([int])]
     param(
         [Parameter(Mandatory = $true)]
         [string]$MySqlRoot,
@@ -235,15 +281,14 @@ function Invoke-Main {
             PollIntervalSeconds = $SERVER_POLL_INTERVAL_SECONDS
         }
         # データディレクトリを初期化し、データベースを作成する。
-        Initialize-MySqlData -DataPath $dataPath -ServerPath $serverPath
+        Initialize-MySqlData -DataPath $dataPath -ServerPath $serverPath -MySqlRoot $MySqlRoot
         New-MySqlDatabase -Configuration $configuration
-        return [int]$SUCCESS_EXIT_CODE
+        exit $SUCCESS_EXIT_CODE
     }
     catch {
         Write-Error -ErrorRecord $_
-        return [int]$FAILURE_EXIT_CODE
+        exit $FAILURE_EXIT_CODE
     }
 }
 
-exit (Invoke-Main -MySqlRoot $MySqlRoot -DatabaseName $DatabaseName -Port $Port)
-
+Invoke-Main -MySqlRoot $MySqlRoot -DatabaseName $DatabaseName -Port $Port
