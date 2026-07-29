@@ -27,6 +27,8 @@ Set-Variable -Name LOG_NAME_FORMAT -Option Constant -Value "yyyyMMdd-HHmm_'insta
 Set-Variable -Name REQUIRED_PS_VERSION -Option Constant -Value ([Version]'5.1')
 Set-Variable -Name SUCCESS_EXIT_CODE -Option Constant -Value 0
 Set-Variable -Name FAILURE_EXIT_CODE -Option Constant -Value 1
+Set-Variable -Name MULTIBYTE_PATH_PATTERN -Option Constant -Value '[^\x00-\x7F]'
+Set-Variable -Name MULTIBYTE_PATH_ERROR_MESSAGE -Option Constant -Value 'MySQLはマルチバイトを含むパスに配置できません。マルチバイトを含まないパスでインストールをしてください'
 
 <#
 .SYNOPSIS
@@ -59,6 +61,26 @@ function Start-WinRmService {
     if ($service.Status -ne 'Running') {
         throw 'WinRMサービスを起動できない。'
     }
+}
+
+<#
+.SYNOPSIS
+    配置先パスにマルチバイト文字が含まれていないことを確認する。
+.PARAMETER Path
+    検査対象の配置先パス。
+.OUTPUTS
+    マルチバイト文字を含む場合はTrue、それ以外はFalse。
+#>
+function Test-MultiBytePath {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Path
+    )
+
+    return $Path -match $MULTIBYTE_PATH_PATTERN
 }
 
 <#
@@ -346,6 +368,12 @@ function Invoke-Main {
         $mySqlArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'mysql')
         $phpMyAdminArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'phpmyadmin')
         $projectRoot = (Resolve-Path (Join-Path $RESOURCE_ROOT '..')).Path
+
+        # MySQLが起動できない配置先を検出し、.dev-envの生成前に中断する。
+        if (Test-MultiBytePath -Path $projectRoot) {
+            throw $MULTIBYTE_PATH_ERROR_MESSAGE
+        }
+
         $localhostNode = $configurationData.AllNodes | Where-Object { $_.NodeName -eq 'localhost' } | Select-Object -First 1
         $localhostNode.ProjectRoot = $projectRoot
         $localhostNode.EnvironmentRoot = Join-Path $projectRoot '.dev-env'

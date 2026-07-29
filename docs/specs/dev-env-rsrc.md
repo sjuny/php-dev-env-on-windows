@@ -60,6 +60,7 @@ DSCおよび`install.ps1`は、環境変数、レジストリ、Windowsサービ
 役割は以下である。
 
 - 前提条件確認
+- `.dev-env`配置先パスのマルチバイト文字確認
 - インストールログ開始
 - Configurationコンパイル
 - MOF生成
@@ -77,6 +78,13 @@ DSCおよび`install.ps1`は、環境変数、レジストリ、Windowsサービ
 ```
 
 `install.ps1`は、配置先のプロジェクトルートを解決して`.dev-env`を生成する。
+
+`.dev-env`を生成する前に、配置先のプロジェクトルートへマルチバイト文字が含まれていないかを確認する。
+マルチバイト文字を含む場合は、次のメッセージを表示してインストールを中断する。
+
+```text
+MySQLはマルチバイトを含むパスに配置できません。マルチバイトを含まないパスでインストールをしてください
+```
 
 ---
 
@@ -131,6 +139,28 @@ modules/
       MySqlEnvironment/
         MySqlEnvironment.schema.psm1
 ```
+
+---
+
+### DevEnvironmentモジュールの重複配置
+
+PC上の`PSModulePath`に`DevEnvironment`モジュールが複数のバージョンで存在する場合、`install.ps1`のConfiguration解析時に`Import-DscResource -ModuleName DevEnvironment`が使用するバージョンを特定できない。
+この場合、次のエラーが発生してインストールを中断する。
+
+```text
+モジュール 'DevEnvironment' の複数のバージョンが見つかりました。
+Get-Module -ListAvailable -FullyQualifiedName DevEnvironment を実行してシステムで使用可能なバージョンを確認してから、完全修飾名を使用してください。
+FullyQualifiedErrorId : MultipleModuleEntriesFoundDuringParse
+```
+
+インストール前に、Windows PowerShell 5.1で次のコマンドを実行して、検出されるモジュールを確認する。
+
+```powershell
+Get-Module -ListAvailable -FullyQualifiedName DevEnvironment |
+    Select-Object Name, Version, ModuleBase, Path
+```
+
+複数のバージョンが検出された場合は、不要な`DevEnvironment`モジュールを削除するか、不要なモジュールパスを`PSModulePath`から除外する。
 
 ---
 
