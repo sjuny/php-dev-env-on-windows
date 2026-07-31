@@ -256,9 +256,15 @@ function Invoke-NpmInstall {
         [string]$NpmPath
     )
 
-    # 配置済みのnpmで依存関係をインストールする。
+    # 対象ディレクトリへ移動して、配置済みのnpmで依存関係をインストールする。
     Write-Verbose "npm installを実行する: $ApplicationPath"
-    & $NpmPath 'install' '--prefix' $ApplicationPath
+    Push-Location -LiteralPath $ApplicationPath
+    try {
+        & $NpmPath 'install'
+    }
+    finally {
+        Pop-Location
+    }
     # npm installの終了コードを確認する。
     if ($LASTEXITCODE -ne 0) {
         throw "npm installが終了コード${LASTEXITCODE}で失敗した: $ApplicationPath"
@@ -284,9 +290,15 @@ function Invoke-NpmBuild {
         [string]$NpmPath
     )
 
-    # 配置済みのnpmでアプリケーションをビルドする。
+    # 対象ディレクトリへ移動して、配置済みのnpmでアプリケーションをビルドする。
     Write-Verbose "Vite buildを実行する: $ApplicationPath"
-    & $NpmPath 'run' 'build' '--prefix' $ApplicationPath
+    Push-Location -LiteralPath $ApplicationPath
+    try {
+        & $NpmPath 'run' 'build'
+    }
+    finally {
+        Pop-Location
+    }
     # npm run buildの終了コードを確認する。
     if ($LASTEXITCODE -ne 0) {
         throw "npm run buildが終了コード${LASTEXITCODE}で失敗した: $ApplicationPath"
