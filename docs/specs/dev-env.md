@@ -23,7 +23,9 @@ project-root/
   .dev-env/
     nginx/
     php/
+      composer.phar
     mysql/
+    nodejs/
     runtime/
     start.ps1
     stop.ps1

@@ -30,7 +30,11 @@ DSCおよび`install.ps1`は、環境変数、レジストリ、Windowsサービ
 
     php/
       php-8.2.32-nts-Win32-vs16-x64.zip
+      composer.phar
       php.ini
+
+    nodejs/
+      node-v24.18.1-win-x64.zip
 
     phpmyadmin/
       phpMyAdmin-5.2.2-all-languages.zip
@@ -65,8 +69,7 @@ DSCおよび`install.ps1`は、環境変数、レジストリ、Windowsサービ
 - Configurationコンパイル
 - MOF生成
 - DSC実行
-- nginxドキュメントルート設定
-- phpMyAdmin配置とnginxのアクセスポート設定
+- phpMyAdmin配置
 - MySQL初期化とデータベース作成
 - 初期化処理が残したMySQLプロセスの停止
 - インストールログ終了
@@ -173,9 +176,9 @@ Get-Module -ListAvailable -FullyQualifiedName DevEnvironment |
 - nginx ZIP展開
 - `nginx.conf`配置
 - `web-app.conf`配置
-- 設定ファイルのSHA-256による内容比較
+- placeholderを置換した設定内容の比較
 
-`web-app.conf`はテンプレートとして管理する。`install.ps1`が
+`web-app.conf`はテンプレートとして管理する。DSCの`Script`リソースが
 `<プロジェクトルート>/application/public`をドキュメントルートとして生成先へ反映する。
 
 ### PhpEnvironment
@@ -184,13 +187,22 @@ Get-Module -ListAvailable -FullyQualifiedName DevEnvironment |
 
 - PHP ZIP展開
 - `php.ini`配置
+- `composer.phar`配置
+
+### NodeEnvironment
+
+役割は以下である。
+
+- Node.js ZIP展開
+- `.dev-env/nodejs`への配置
+- `node.exe`および`npm.cmd`の配置確認
 
 ### MySqlEnvironment
 
 役割は以下である。
 
 - MySQL ZIP展開
-- `my.ini`配置
+- placeholderを置換した`my.ini`配置
 - `data`作成
 - `logs`作成
 - `temp`作成
@@ -224,8 +236,9 @@ configuration-data/
   Development.psd1
 ```
 
-主な設定値はプロジェクトルート、`.dev-env`の配置先、nginx・PHP・MySQLのポート番号、
+主な設定値はプロジェクトルート、`.dev-env`の配置先、nginx・PHP-CGI・MySQLのポート番号、
 `PhpMyAdminPort`、`MySqlDatabaseName`である。phpMyAdminのアクセスポートは`4000`とする。
+`PhpCgiPort`はPHP-CGIの待受ポートとnginxのFastCGI接続先に反映する。
 `install.ps1`がプロジェクトルートと各配置先を絶対パスへ解決する。
 
 ---
@@ -277,15 +290,16 @@ Stop-Transcript
 DSCが行うことは以下である。
 
 - ZIP展開
+- ComposerおよびNode.jsの配置
 - 設定ファイル配置
 - 設定ファイルの内容比較
+- 設定ファイルのplaceholder置換
 - `runtime`作成
-- start.ps1、stop.ps1、status.ps1配置
+- placeholderを置換したstart.ps1、stop.ps1、status.ps1配置
 
 `install.ps1`が行うことは以下である。
 
-- nginx設定の配置先依存パス生成
-- phpMyAdminの配置とnginxの`4000`番ポート設定
+- phpMyAdminの配置と設定
 - phpMyAdminのログインなし設定
 - MySQL初期化
 - 指定データベース作成
@@ -299,11 +313,16 @@ DSCおよび`install.ps1`が行わないことは以下である。
 - PATH変更
 - Laravelセットアップ
 
+`install.ps1`は、`application`配下に`composer.json`が存在する場合は配置したPHPとComposerで依存関係をインストールする。
+`package.json`が存在する場合は配置したNode.jsのnpmで依存関係をインストールし、Viteが依存関係として定義されている場合は`npm run build`を実行する。
+
 ---
 
 ## 13. ミドルウェアのZIPファイル
 
 - [mysql](https://dev.mysql.com/downloads/mysql/)
 - [php](https://www.php.net/downloads.php?os=windows)
+- [composer manual download](https://getcomposer.org/download/)
+- [node.js](https://nodejs.org/en/download)
 - [nginx](https://nginx.org/en/download.html)
 - [phpMyAdmin](https://www.phpmyadmin.net/downloads/)
