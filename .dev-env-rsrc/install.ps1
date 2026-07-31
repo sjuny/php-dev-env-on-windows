@@ -29,6 +29,7 @@ Set-Variable -Name SUCCESS_EXIT_CODE -Option Constant -Value 0
 Set-Variable -Name FAILURE_EXIT_CODE -Option Constant -Value 1
 Set-Variable -Name MULTIBYTE_PATH_PATTERN -Option Constant -Value '[^\x00-\x7F]'
 Set-Variable -Name MULTIBYTE_PATH_ERROR_MESSAGE -Option Constant -Value 'MySQLはマルチバイトを含むパスに配置できません。マルチバイトを含まないパスでインストールをしてください'
+Set-Variable -Name COMPOSER_FILE_NAME -Option Constant -Value 'composer.phar'
 
 <#
 .SYNOPSIS
@@ -43,21 +44,25 @@ function Start-WinRmService {
     [CmdletBinding(SupportsShouldProcess = $true)]
     param()
 
+    # WinRMサービスの状態を取得する。
     $service = Get-Service -Name 'WinRM' -ErrorAction Stop
     if ($service.Status -eq 'Running') {
         return
     }
 
+    # WinRMサービスの起動可否を確認する。
     if (-not $PSCmdlet.ShouldProcess('WinRM', 'サービスを起動する')) {
         return
     }
 
+    # WinRMサービスを起動し、実行状態を待機する。
     Start-Service -InputObject $service -ErrorAction Stop
     $service.WaitForStatus(
         [System.ServiceProcess.ServiceControllerStatus]::Running,
         [TimeSpan]::FromSeconds(30)
     )
 
+    # WinRMサービスが実行状態になったことを確認する。
     if ($service.Status -ne 'Running') {
         throw 'WinRMサービスを起動できない。'
     }
@@ -80,6 +85,7 @@ function Test-MultiBytePath {
         [string]$Path
     )
 
+    # 配置先パスにマルチバイト文字が含まれるか判定する。
     return $Path -match $MULTIBYTE_PATH_PATTERN
 }
 
@@ -88,10 +94,12 @@ function Test-MultiBytePath {
     DSC適用に必要な前提条件を確認する。
 #>
 function Test-Prerequisite {
+    # PowerShellのバージョンを確認する。
     if ($PSVersionTable.PSVersion -lt $REQUIRED_PS_VERSION) {
         throw "PowerShell $REQUIRED_PS_VERSION 以上が必要である。"
     }
 
+    # DSC ConfigurationとConfigurationDataの存在を確認する。
     if (-not (Test-Path -LiteralPath $CONFIGURATION_PATH -PathType Leaf)) {
         throw "Configurationが見つからない: $CONFIGURATION_PATH"
     }
@@ -100,10 +108,23 @@ function Test-Prerequisite {
         throw "ConfigurationDataが見つからない: $CONFIGURATION_DATA_PATH"
     }
 
+    # MySQL初期化スクリプトの存在を確認する。
     if (-not (Test-Path -LiteralPath $INITIALIZE_MYSQL_SCRIPT_PATH -PathType Leaf)) {
         throw "MySQL初期化スクリプトが見つからない: $INITIALIZE_MYSQL_SCRIPT_PATH"
     }
 
+    # Composer資材とNode.js資材の存在を確認する。
+    $composerPath = Join-Path $ASSET_ROOT 'php\composer.phar'
+    if (-not (Test-Path -LiteralPath $composerPath -PathType Leaf)) {
+        throw "Composerが見つからない: $composerPath"
+    }
+
+    $nodeAssetPath = Join-Path $ASSET_ROOT 'nodejs'
+    if (-not (Test-Path -LiteralPath $nodeAssetPath -PathType Container)) {
+        throw "Node.js資材ディレクトリが見つからない: $nodeAssetPath"
+    }
+
+    # MySQL設定テンプレートとphpMyAdmin資材の存在を確認する。
     $mySqlConfigurationTemplatePath = Join-Path $ASSET_ROOT 'mysql\my.ini'
     if (-not (Test-Path -LiteralPath $mySqlConfigurationTemplatePath -PathType Leaf)) {
         throw "MySQL設定テンプレートが見つからない: $mySqlConfigurationTemplatePath"
@@ -114,8 +135,210 @@ function Test-Prerequisite {
         throw "phpMyAdmin資材ディレクトリが見つからない: $phpMyAdminAssetPath"
     }
 
+    # DSC適用コマンドの利用可否を確認する。
     if (-not (Get-Command -Name Start-DscConfiguration -ErrorAction SilentlyContinue)) {
         throw 'Start-DscConfigurationが利用できない。'
+    }
+}
+
+<#
+.SYNOPSIS
+application配下から指定したマニフェストを探索する。
+
+.PARAMETER ApplicationRoot
+探索対象のapplicationルート。
+
+.PARAMETER Name
+探索するマニフェスト名。
+#>
+function Get-ApplicationManifest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ApplicationRoot,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateSet('composer.json', 'package.json')]
+        [string]$Name
+    )
+
+    # applicationルートの存在を確認する。
+    if (-not (Test-Path -LiteralPath $ApplicationRoot -PathType Container)) {
+        return
+    }
+
+    # 依存関係管理用ディレクトリを除外してマニフェストを探索する。
+    return Get-ChildItem -LiteralPath $ApplicationRoot -Filter $Name -File -Recurse |
+        Where-Object { $_.FullName -notmatch '[\\/]((node_modules)|(vendor))([\\/]|$)' }
+}
+
+<#
+.SYNOPSIS
+package.jsonにViteの依存関係が定義されているか確認する。
+
+.PARAMETER Package
+解析済みのpackage.json。
+#>
+function Test-ViteDependency {
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNull()]
+        [psobject]$Package
+    )
+
+    # dependenciesとdevDependenciesを順に確認する。
+    foreach ($propertyName in @('dependencies', 'devDependencies')) {
+        $property = $Package.PSObject.Properties[$propertyName]
+        if ($null -eq $property -or $null -eq $property.Value) {
+            continue
+        }
+
+        # Viteが依存関係として定義されているか判定する。
+        if ($null -ne $property.Value.PSObject.Properties['vite']) {
+            return $true
+        }
+    }
+
+    return $false
+}
+
+<#
+.SYNOPSIS
+指定したアプリケーションでComposer installを実行する。
+
+.PARAMETER ApplicationPath
+Composerを実行するアプリケーションディレクトリ。
+#>
+function Invoke-ComposerInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ApplicationPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$PhpPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ComposerPath
+    )
+
+    # 配置済みのPHPとComposerで依存関係をインストールする。
+    Write-Verbose "Composer installを実行する: $ApplicationPath"
+    & $PhpPath $ComposerPath 'install' '--no-interaction' '--working-dir' $ApplicationPath
+    # Composerの終了コードを確認する。
+    if ($LASTEXITCODE -ne 0) {
+        throw "Composer installが終了コード${LASTEXITCODE}で失敗した: $ApplicationPath"
+    }
+}
+
+<#
+.SYNOPSIS
+指定したアプリケーションでnpm installを実行する。
+
+.PARAMETER ApplicationPath
+npmを実行するアプリケーションディレクトリ。
+#>
+function Invoke-NpmInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ApplicationPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$NpmPath
+    )
+
+    # 配置済みのnpmで依存関係をインストールする。
+    Write-Verbose "npm installを実行する: $ApplicationPath"
+    & $NpmPath 'install' '--prefix' $ApplicationPath
+    # npm installの終了コードを確認する。
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm installが終了コード${LASTEXITCODE}で失敗した: $ApplicationPath"
+    }
+}
+
+<#
+.SYNOPSIS
+指定したアプリケーションでnpm run buildを実行する。
+
+.PARAMETER ApplicationPath
+npmを実行するアプリケーションディレクトリ。
+#>
+function Invoke-NpmBuild {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ApplicationPath,
+
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$NpmPath
+    )
+
+    # 配置済みのnpmでアプリケーションをビルドする。
+    Write-Verbose "Vite buildを実行する: $ApplicationPath"
+    & $NpmPath 'run' 'build' '--prefix' $ApplicationPath
+    # npm run buildの終了コードを確認する。
+    if ($LASTEXITCODE -ne 0) {
+        throw "npm run buildが終了コード${LASTEXITCODE}で失敗した: $ApplicationPath"
+    }
+}
+
+<#
+.SYNOPSIS
+application配下のComposerおよびnpm依存関係をインストールする。
+
+.PARAMETER ProjectRoot
+プロジェクトルート。
+
+.PARAMETER Configuration
+localhostの構成データ。
+#>
+function Invoke-ApplicationDependencyInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$ProjectRoot,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Configuration
+    )
+
+    # applicationルートを解決し、存在を確認する。
+    $applicationRoot = Join-Path $ProjectRoot 'application'
+    if (-not (Test-Path -LiteralPath $applicationRoot -PathType Container)) {
+        return
+    }
+
+    # 配置済みのPHP、Composer、npmの実行パスを解決する。
+    $phpRoot = Join-Path $Configuration.EnvironmentRoot 'php'
+    $phpPath = Join-Path $phpRoot 'php.exe'
+    $composerPath = Join-Path $phpRoot $COMPOSER_FILE_NAME
+    $npmPath = Join-Path (Join-Path $Configuration.EnvironmentRoot 'nodejs') 'npm.cmd'
+
+    # Composerマニフェストごとに依存関係をインストールする。
+    foreach ($manifest in Get-ApplicationManifest -ApplicationRoot $applicationRoot -Name 'composer.json') {
+        Invoke-ComposerInstall -ApplicationPath $manifest.DirectoryName -PhpPath $phpPath -ComposerPath $composerPath
+    }
+
+    # npmマニフェストを解析し、依存関係をインストールする。
+    foreach ($manifest in Get-ApplicationManifest -ApplicationRoot $applicationRoot -Name 'package.json') {
+        $package = Get-Content -LiteralPath $manifest.FullName -Raw | ConvertFrom-Json
+        Invoke-NpmInstall -ApplicationPath $manifest.DirectoryName -NpmPath $npmPath
+        # Viteの依存関係がある場合だけビルドする。
+        if (Test-ViteDependency -Package $package) {
+            Invoke-NpmBuild -ApplicationPath $manifest.DirectoryName -NpmPath $npmPath
+        }
     }
 }
 
@@ -135,6 +358,7 @@ function Get-ArchiveName {
 
     # ミドルウェア資産に配置されたZIPファイルを取得する。
     $archiveFiles = @(Get-ChildItem -LiteralPath $AssetDirectory -Filter '*.zip' -File -ErrorAction Stop)
+    # ZIPファイルが1個だけ存在することを確認する。
     if ($archiveFiles.Count -eq 0) {
         throw "ZIPファイルが見つからない: $AssetDirectory"
     }
@@ -144,137 +368,6 @@ function Get-ArchiveName {
     }
 
     return $archiveFiles[0].Name
-}
-
-<#
-.SYNOPSIS
-    配置先のプロジェクトルートに応じてnginxのドキュメントルートを設定する。
-.PARAMETER ProjectRoot
-    プロジェクトルート。
-.PARAMETER EnvironmentRoot
-    .dev-envのルートディレクトリ。
-.PARAMETER PhpMyAdminPort
-    phpMyAdminへアクセスするポート番号。
-#>
-function Set-NginxDocumentRoot {
-    [CmdletBinding(SupportsShouldProcess = $true)]
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateNotNullOrEmpty()]
-        [string]$ProjectRoot,
-
-        [Parameter(Mandatory = $true)]
-        [ValidateNotNullOrEmpty()]
-        [string]$EnvironmentRoot,
-
-        [Parameter(Mandatory = $true)]
-        [ValidateRange(1, 65535)]
-        [int]$PhpMyAdminPort
-    )
-
-    # nginx設定のテンプレートと出力先を解決する。
-    $templatePath = Join-Path $ASSET_ROOT 'nginx\web-app.conf'
-    $destinationPath = Join-Path $EnvironmentRoot 'nginx\conf\sites\web-app.conf'
-    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
-        throw "nginx設定テンプレートが見つからない: $templatePath"
-    }
-
-    if (-not (Test-Path -LiteralPath (Split-Path -Parent $destinationPath) -PathType Container)) {
-        throw "nginx設定ディレクトリが見つからない: $(Split-Path -Parent $destinationPath)"
-    }
-
-    # Windows形式のパスをnginx設定用のスラッシュ区切りへ変換する。
-    $publicPath = (Join-Path $ProjectRoot 'application\public') -replace '\\', '/'
-    $phpMyAdminPath = (Join-Path $EnvironmentRoot 'phpmyadmin') -replace '\\', '/'
-    $template = Get-Content -LiteralPath $templatePath -Raw
-    if (-not $template.Contains('__PROJECT_PUBLIC_PATH__')) {
-        throw "nginx設定テンプレートに置換文字列がない: $templatePath"
-    }
-
-    if (-not $template.Contains('__PHPMYADMIN_ROOT_PATH__')) {
-        throw "nginx設定テンプレートにphpMyAdminの置換文字列がない: $templatePath"
-    }
-
-    if (-not $template.Contains('__PHPMYADMIN_PORT__')) {
-        throw "nginx設定テンプレートにphpMyAdminのポート置換文字列がない: $templatePath"
-    }
-
-    # 配置先に実際のドキュメントルートを反映する。
-    $configuration = $template.Replace('__PROJECT_PUBLIC_PATH__', $publicPath)
-    $configuration = $configuration.Replace('__PHPMYADMIN_ROOT_PATH__', $phpMyAdminPath)
-    $configuration = $configuration.Replace('__PHPMYADMIN_PORT__', $PhpMyAdminPort.ToString())
-    if ($PSCmdlet.ShouldProcess($destinationPath, 'nginx設定を配置する')) {
-        [System.IO.File]::WriteAllText(
-            $destinationPath,
-            $configuration,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-    }
-}
-
-<#
-.SYNOPSIS
-    配置先に応じてMySQLの設定ファイルを絶対パスで配置する。
-.DESCRIPTION
-    my.iniテンプレートの置換文字列をMySQLの実パスへ置換して配置する。
-    相対パス指定はカレントディレクトリに依存して起動が失敗するため、絶対パスで設定する。
-.PARAMETER EnvironmentRoot
-    .dev-envのルートディレクトリ。
-.PARAMETER MySqlPort
-    MySQLが待ち受けるポート番号。
-.EXAMPLE
-    Set-MySqlConfiguration -EnvironmentRoot $environmentRoot -MySqlPort 3306
-#>
-function Set-MySqlConfiguration {
-    [CmdletBinding(SupportsShouldProcess = $true)]
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateNotNullOrEmpty()]
-        [string]$EnvironmentRoot,
-
-        [Parameter(Mandatory = $true)]
-        [ValidateRange(1, 65535)]
-        [int]$MySqlPort
-    )
-
-    # MySQL設定のテンプレートと出力先を解決する。
-    $templatePath = Join-Path $ASSET_ROOT 'mysql\my.ini'
-    $mySqlRoot = Join-Path $EnvironmentRoot 'mysql'
-    $destinationPath = Join-Path $mySqlRoot 'conf\my.ini'
-    if (-not (Test-Path -LiteralPath $templatePath -PathType Leaf)) {
-        throw "MySQL設定テンプレートが見つからない: $templatePath"
-    }
-
-    if (-not (Test-Path -LiteralPath (Split-Path -Parent $destinationPath) -PathType Container)) {
-        throw "MySQL設定ディレクトリが見つからない: $(Split-Path -Parent $destinationPath)"
-    }
-
-    # Windows形式のパスをMySQL設定用のスラッシュ区切りへ変換する。
-    $replacementMap = [ordered]@{
-        '__MYSQL_ROOT_PATH__' = $mySqlRoot -replace '\\', '/'
-        '__MYSQL_DATA_PATH__' = (Join-Path $mySqlRoot 'data') -replace '\\', '/'
-        '__MYSQL_TEMP_PATH__' = (Join-Path $mySqlRoot 'temp') -replace '\\', '/'
-        '__MYSQL_LOG_PATH__'  = (Join-Path $mySqlRoot 'logs\mysql-error.log') -replace '\\', '/'
-        '__MYSQL_PORT__'      = $MySqlPort.ToString()
-    }
-
-    # テンプレートの置換文字列を実パスへ置換する。
-    $configuration = Get-Content -LiteralPath $templatePath -Raw
-    foreach ($placeholder in $replacementMap.Keys) {
-        if (-not $configuration.Contains($placeholder)) {
-            throw "MySQL設定テンプレートに置換文字列がない: $placeholder"
-        }
-
-        $configuration = $configuration.Replace($placeholder, $replacementMap[$placeholder])
-    }
-
-    if ($PSCmdlet.ShouldProcess($destinationPath, 'MySQL設定を配置する')) {
-        [System.IO.File]::WriteAllText(
-            $destinationPath,
-            $configuration,
-            [System.Text.UTF8Encoding]::new($false)
-        )
-    }
 }
 
 <#
@@ -297,14 +390,17 @@ function Invoke-MySqlInitialization {
         [hashtable]$Configuration
     )
 
+    # 構成データから作成対象のデータベース名を取得する。
     $databaseName = $Configuration.MySqlDatabaseName
     if ([string]::IsNullOrWhiteSpace($databaseName)) {
         # DB名が空の場合は、MySQLの初期化とDB作成を行わない。
         return
     }
 
+    # MySQL初期化スクリプトを実行する。
     & $INITIALIZE_MYSQL_SCRIPT_PATH -MySqlRoot (Join-Path $Configuration.EnvironmentRoot 'mysql') `
         -DatabaseName $databaseName -Port $Configuration.MySqlPort
+    # MySQL初期化スクリプトの終了コードを確認する。
     if ($LASTEXITCODE -ne 0) {
         throw "MySQL初期化が終了コード$LASTEXITCODEで失敗した。"
     }
@@ -324,9 +420,11 @@ function Stop-MySqlProcess {
     )
 
     # MySQLが生成したPIDファイルを取得する。
+    # MySQLデータディレクトリからPIDファイルを取得する。
     $dataPath = Join-Path $EnvironmentRoot 'mysql\data'
     $pidFiles = @(Get-ChildItem -LiteralPath $dataPath -Filter '*.pid' -File -ErrorAction SilentlyContinue)
     foreach ($pidFile in $pidFiles) {
+        # PIDファイルからプロセスを取得する。
         $processId = [int](Get-Content -LiteralPath $pidFile.FullName -Raw)
         $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
         if ($null -eq $process) {
@@ -334,6 +432,7 @@ function Stop-MySqlProcess {
         }
 
         # 初期化処理が残したMySQLプロセスを停止する。
+        # 対象プロセスを停止し、終了を待機する。
         if ($PSCmdlet.ShouldProcess($processId, 'MySQLプロセスを停止する')) {
             Stop-Process -Id $processId -Force
             $process.WaitForExit()
@@ -352,6 +451,7 @@ function Invoke-Main {
     try {
         # 前提条件と出力先を確認する。
         Test-Prerequisite
+        # 出力先とログ出力先を作成し、トランスクリプトを開始する。
         New-Item -Path $OUTPUT_ROOT, $LOG_ROOT -ItemType Directory -Force | Out-Null
         $transcriptPath = Join-Path $LOG_ROOT (Get-Date -Format $LOG_NAME_FORMAT)
         Start-Transcript -Path $transcriptPath -Force | Out-Null
@@ -366,6 +466,7 @@ function Invoke-Main {
         $nginxArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'nginx')
         $phpArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'php')
         $mySqlArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'mysql')
+        $nodeArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'nodejs')
         $phpMyAdminArchiveName = Get-ArchiveName -AssetDirectory (Join-Path $ASSET_ROOT 'phpmyadmin')
         $projectRoot = (Resolve-Path (Join-Path $RESOURCE_ROOT '..')).Path
 
@@ -374,25 +475,23 @@ function Invoke-Main {
             throw $MULTIBYTE_PATH_ERROR_MESSAGE
         }
 
+        # localhost用の構成データへ実行時パスを設定する。
         $localhostNode = $configurationData.AllNodes | Where-Object { $_.NodeName -eq 'localhost' } | Select-Object -First 1
         $localhostNode.ProjectRoot = $projectRoot
         $localhostNode.EnvironmentRoot = Join-Path $projectRoot '.dev-env'
         $localhostNode.AssetRoot = $ASSET_ROOT
         $localhostNode.OutputRoot = Join-Path $RESOURCE_ROOT 'outputs'
+        # DSC ConfigurationをコンパイルしてMOFを生成する。
         $null = Initialize-DevEnvironment -ConfigurationData $configurationData -OutputPath $OUTPUT_ROOT `
-            -NginxArchiveName $nginxArchiveName -PhpArchiveName $phpArchiveName -MySqlArchiveName $mySqlArchiveName `
+            -NginxArchiveName $nginxArchiveName -PhpArchiveName $phpArchiveName -NodeArchiveName $nodeArchiveName `
+            -MySqlArchiveName $mySqlArchiveName `
             -PhpMyAdminArchiveName $phpMyAdminArchiveName
 
         # 生成したMOFをDSC Local Configuration Managerへ適用する。
         $null = Start-DscConfiguration -Path $OUTPUT_ROOT -Wait -Verbose -Force
 
-        # 配置先のプロジェクトルートをnginx設定へ反映する。
-        Set-NginxDocumentRoot -ProjectRoot $projectRoot -EnvironmentRoot $localhostNode.EnvironmentRoot `
-            -PhpMyAdminPort $localhostNode.PhpMyAdminPort
-
-        # 配置先の実パスをMySQL設定へ反映する。
-        Set-MySqlConfiguration -EnvironmentRoot $localhostNode.EnvironmentRoot `
-            -MySqlPort $localhostNode.MySqlPort
+        # application配下のComposer/npm依存関係をインストールし、必要に応じてViteをビルドする。
+        Invoke-ApplicationDependencyInstall -ProjectRoot $projectRoot -Configuration $localhostNode
 
         # DSC適用後にMySQLデータディレクトリと指定データベースを初期化する。
         $null = Invoke-MySqlInitialization -Configuration $localhostNode

@@ -19,6 +19,7 @@ Set-Variable -Name SUCCESS_EXIT_CODE -Option Constant -Value 0
 Set-Variable -Name FAILURE_EXIT_CODE -Option Constant -Value 1
 Set-Variable -Name MYSQL_START_TIMEOUT_SECONDS -Option Constant -Value 10
 Set-Variable -Name MYSQL_START_POLL_INTERVAL_SECONDS -Option Constant -Value 1
+Set-Variable -Name PHP_CGI_PORT -Option Constant -Value '__PHP_CGI_PORT__'
 
 #Requires -Version 5.1
 <#
@@ -170,7 +171,7 @@ function Invoke-Main {
             -FilePath (Join-Path $environmentRoot 'php\php-cgi.exe') `
             -WorkingDirectory (Join-Path $environmentRoot 'php') `
             -PidPath (Join-Path $runtimeRoot 'php.pid') `
-            -ArgumentList @('-b', '127.0.0.1:9000')
+            -ArgumentList @('-b', ('127.0.0.1:{0}' -f $PHP_CGI_PORT))
         # nginxを起動する。
         Start-ManagedProcess -Name 'nginx' `
             -FilePath (Join-Path $environmentRoot 'nginx\nginx.exe') `

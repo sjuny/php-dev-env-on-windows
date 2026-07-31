@@ -7,6 +7,7 @@
     DscResourcesToExport = @(
         'NginxEnvironment',
         'PhpEnvironment',
+        'NodeEnvironment',
         'MySqlEnvironment',
         'PhpMyAdminEnvironment'
     )
