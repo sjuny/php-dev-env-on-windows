@@ -148,7 +148,7 @@ configuration Initialize-DevEnvironment {
                 [System.IO.File]::WriteAllText(
                     $destinationPath,
                     $configuration,
-                    [System.Text.UTF8Encoding]::new($false)
+                    [System.Text.UTF8Encoding]::new($true)
                 )
             }
             DependsOn = '[File]StartScript'

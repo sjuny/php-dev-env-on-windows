@@ -14,25 +14,27 @@ Configuration PhpEnvironment {
         [string]$ArchiveName
     )
 
+    # DSC標準リソースを読み込む。
     Import-DscResource -ModuleName PSDesiredStateConfiguration
 
+    # PHP資材の入力値を検証する。
     if ([string]::IsNullOrWhiteSpace($ArchiveName)) {
         throw 'PHPのZIPファイル名が指定されていない。'
     }
 
-    # PHPの必須ファイルを判定し、未配置の場合だけZIPを展開する。
+    # PHP本体を配置する。
     Script InstallPhpDirectory {
-        # 現在のPHP配置状態を取得する。
+        # PHP本体の配置状態を取得する。
         GetScript = {
             return @{ Result = (Test-Path -LiteralPath (Join-Path $using:EnvironmentRoot 'php\php.exe') -PathType Leaf).ToString() }
         }
-        # PHPの必須ファイルが配置済みか検証する。
+        # PHP本体が配置済みか検証する。
         TestScript = {
             return Test-Path -LiteralPath (Join-Path $using:EnvironmentRoot 'php\php.exe') -PathType Leaf
         }
-        # PHP ZIPを展開し、配置先を正規化する。
+        # PHP ZIPを展開し、配置先を整える。
         SetScript = {
-            # PHP資材と配置先のパスを解決する。
+            # PHP ZIP資材と配置先のパスを解決する。
             $archivePath = Join-Path (Join-Path $using:AssetRoot 'php') $using:ArchiveName
             $destinationPath = Join-Path $using:EnvironmentRoot 'php'
             # PHPの配置先ディレクトリを作成する。
@@ -48,16 +50,72 @@ Configuration PhpEnvironment {
         }
     }
 
-    # 展開したPHPへPHP設定ファイルを配置する。
-    File PhpConfiguration {
-        DestinationPath = (Join-Path $EnvironmentRoot 'php\php.ini')
-        SourcePath = (Join-Path $AssetRoot 'php\php.ini')
-        Ensure = 'Present'
-        Type = 'File'
+    # PHP設定ファイルを配置する。
+    Script PhpConfiguration {
+        # 配置済みPHP設定ファイルを取得する。
+        GetScript = {
+            $destinationPath = Join-Path $using:EnvironmentRoot 'php\php.ini'
+            if (-not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
+                return @{ Result = '' }
+            }
+
+            return @{ Result = Get-Content -LiteralPath $destinationPath -Raw }
+        }
+        # PHP設定テンプレートを配置先のパスへ展開し、配置済みの内容と比較する。
+        TestScript = {
+            # PHP設定テンプレートと配置先を解決する。
+            $sourcePath = Join-Path $using:AssetRoot 'php\php.ini'
+            $destinationPath = Join-Path $using:EnvironmentRoot 'php\php.ini'
+            if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf) -or
+                -not (Test-Path -LiteralPath $destinationPath -PathType Leaf)) {
+                return $false
+            }
+
+            # 配置先の絶対パスを反映した期待値を生成する。
+            $phpRoot = Join-Path $using:EnvironmentRoot 'php'
+            $expectedContent = Get-Content -LiteralPath $sourcePath -Raw
+            $expectedContent = $expectedContent.Replace(
+                '__PHP_EXTENSION_DIR__',
+                (Join-Path $phpRoot 'ext')
+            )
+            $expectedContent = $expectedContent.Replace(
+                '__PHP_ERROR_LOG__',
+                (Join-Path $phpRoot 'php_errors.log')
+            )
+            $actualContent = Get-Content -LiteralPath $destinationPath -Raw
+            return $actualContent -ceq $expectedContent
+        }
+        # PHP設定テンプレートを展開し、配置先の絶対パスで保存する。
+        SetScript = {
+            # PHP設定テンプレートと配置先を解決する。
+            $sourcePath = Join-Path $using:AssetRoot 'php\php.ini'
+            $destinationPath = Join-Path $using:EnvironmentRoot 'php\php.ini'
+            $phpRoot = Join-Path $using:EnvironmentRoot 'php'
+
+            # PHP設定テンプレートを読み込む。
+            $content = Get-Content -LiteralPath $sourcePath -Raw
+
+            # 配置先の絶対パスをテンプレートへ反映する。
+            $content = $content.Replace(
+                '__PHP_EXTENSION_DIR__',
+                (Join-Path $phpRoot 'ext')
+            )
+            $content = $content.Replace(
+                '__PHP_ERROR_LOG__',
+                (Join-Path $phpRoot 'php_errors.log')
+            )
+
+            # 生成したPHP設定ファイルをUTF-8で保存する。
+            [System.IO.File]::WriteAllText(
+                $destinationPath,
+                $content,
+                (New-Object System.Text.UTF8Encoding($false))
+            )
+        }
         DependsOn = '[Script]InstallPhpDirectory'
     }
 
-    # 展開したPHPへComposerを配置する。
+    # Composerを配置する。
     File Composer {
         DestinationPath = (Join-Path $EnvironmentRoot 'php\composer.phar')
         SourcePath = (Join-Path $AssetRoot 'php\composer.phar')
